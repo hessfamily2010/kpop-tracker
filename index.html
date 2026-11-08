@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>K-Pop Tracker</title>
+<style>
+  :root {
+    --bg: #fff7fb; --card: #ffffff; --ink: #2a1f2d; --muted: #7d6b82;
+    --accent: #e0479e; --accent-2: #7c4dff; --line: #f0dbe8; --new: #ff3b7f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #17101c; --card: #221829; --ink: #f6eaf8; --muted: #a894b0; --line: #35253f; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 16px/1.45 system-ui, sans-serif; background: var(--bg); color: var(--ink); }
+  header { padding: 20px 16px 8px; max-width: 760px; margin: 0 auto; }
+  h1 { margin: 0 0 12px; font-size: 1.5rem; background: linear-gradient(90deg, var(--accent), var(--accent-2));
+       -webkit-background-clip: text; background-clip: text; color: transparent; }
+  main { max-width: 760px; margin: 0 auto; padding: 0 16px 48px; }
+  form { display: flex; gap: 8px; }
+  input { flex: 1; min-width: 0; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--line);
+          background: var(--card); color: var(--ink); font: inherit; }
+  button { padding: 10px 14px; border-radius: 12px; border: 0; background: var(--accent); color: #fff;
+           font: inherit; font-weight: 600; cursor: pointer; }
+  button.ghost { background: transparent; color: var(--muted); border: 1px solid var(--line); }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 999px;
+          border: 1px solid var(--line); background: var(--card); color: var(--ink); cursor: pointer; font-size: .9rem; }
+  .chip[aria-pressed="true"] { background: var(--accent-2); color: #fff; border-color: var(--accent-2); }
+  .chip .x { opacity: .6; padding: 0 2px; }
+  .chip .count { background: var(--new); color: #fff; border-radius: 999px; padding: 0 7px; font-size: .75rem; }
+  .bar { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 8px 0 12px;
+         color: var(--muted); font-size: .85rem; }
+  ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+  li { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; }
+  li a { color: var(--ink); text-decoration: none; font-weight: 600; }
+  li a:hover { color: var(--accent); }
+  .meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; font-size: .8rem; color: var(--muted); }
+  .tag { color: var(--accent); font-weight: 600; }
+  .badge { background: var(--new); color: #fff; border-radius: 6px; padding: 0 6px; font-weight: 700; font-size: .7rem; }
+  .empty, .error { text-align: center; color: var(--muted); padding: 32px 8px; }
+  .error { color: var(--new); }
+</style>
+</head>
+<body>
+<header>
+  <h1>K-Pop Tracker</h1>
+  <form id="add-form" autocomplete="off">
+    <input id="artist-input" placeholder="Add an artist or group (e.g. NewJeans, Stray Kids)" maxlength="60" required>
+    <button type="submit">Add</button>
+  </form>
+</header>
+<main>
+  <div id="chips" class="chips"></div>
+  <div class="bar">
+    <span id="status"></span>
+    <span>
+      <button class="ghost" id="mark-read" type="button">Mark all read</button>
+      <button class="ghost" id="refresh" type="button">Refresh</button>
+    </span>
+  </div>
+  <ul id="feed"></ul>
+  <div id="message"></div>
+</main>
+
+<script type="module">
+// ---------- constants ----------
+const STORAGE_KEY = 'kpop-tracker:v1';
+const REFRESH_MS = 15 * 60 * 1000;
+const DAY_MS = 86_400_000;
+
+// ---------- persistence ----------
+const Storage = {
+  load() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+      return {
+        artists: Array.isArray(raw.artists) ? raw.artists : [],
+        lastSeen: raw.lastSeen && typeof raw.lastSeen === 'object' ? raw.lastSeen : {},
+      };
+    } catch { return { artists: [], lastSeen: {} }; }
+  },
+  save({ artists, lastSeen }) {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ artists, lastSeen })); } catch { /* storage unavailable */ }
+  },
+};
+
+// ---------- api ----------
+const Api = {
+  async news(artist) {
+    const res = await fetch(`/api/news?q=${encodeURIComponent(artist)}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const { items } = await res.json();
+    return items.map((i) => ({ ...i, artist, ts: Date.parse(i.date) || 0 }));
+  },
+};
+
+// ---------- state machine ----------
+const norm = (s) => s.trim().replace(/\s+/g, ' ');
+const key = (s) => s.toLowerCase();
+
+const initial = () => ({
+  ...Storage.load(),
+  feed: {},                 // { [artistKey]: item[] }
+  filter: 'all',            // 'all' | artistKey
+  status: 'idle',           // 'idle' | 'loading' | 'ready' | 'error'
+  error: null,
+  updatedAt: null,
+});
+
+function reducer(state, action) {
+  switch (action.type) {
+    case 'ADD_ARTIST': {
+      const name = norm(action.name);
+      if (!name || state.artists.some((a) => key(a) === key(name))) return state;
+      return {
+        ...state,
+        artists: [...state.artists, name],
+        lastSeen: { ...state.lastSeen, [key(name)]: Date.now() - DAY_MS },
+      };
+    }
+    case 'REMOVE_ARTIST': {
+      const k = key(action.name);
+      const { [k]: _f, ...feed } = state.feed;
+      const { [k]: _s, ...lastSeen } = state.lastSeen;
+      return {
+        ...state,
+        artists: state.artists.filter((a) => key(a) !== k),
+        feed, lastSeen,
+        filter: state.filter === k ? 'all' : state.filter,
+      };
+    }
+    case 'SET_FILTER':
+      return { ...state, filter: action.filter };
+    case 'MARK_SEEN': {
+      const now = Date.now();
+      const targets = state.filter === 'all' ? state.artists : state.artists.filter((a) => key(a) === state.filter);
+      const lastSeen = { ...state.lastSeen };
+      targets.forEach((a) => { lastSeen[key(a)] = now; });
+      return { ...state, lastSeen };
+    }
+    case 'FETCH_START':
+      return { ...state, status: 'loading', error: null };
+    case 'FETCH_OK':
+      return { ...state, status: 'ready', feed: action.feed, updatedAt: Date.now(), error: null };
+    case 'FETCH_FAIL':
+      return { ...state, status: 'error', error: action.error };
+    default:
+      return state;
+  }
+}
+
+let state = initial();
+function dispatch(action) {
+  const prev = state;
+  state = reducer(state, action);
+  if (state.artists !== prev.artists || state.lastSeen !== prev.lastSeen) Storage.save(state);
+  render();
+  if (action.type === 'ADD_ARTIST' && state.artists !== prev.artists) refresh();
+}
+
+// ---------- data refresh ----------
+let inflight = null;
+async function refresh() {
+  if (inflight) return inflight;
+  if (!state.artists.length) { dispatch({ type: 'FETCH_OK', feed: {} }); return; }
+  dispatch({ type: 'FETCH_START' });
+  inflight = (async () => {
+    try {
+      const results = await Promise.allSettled(state.artists.map((a) => Api.news(a)));
+      const feed = {};
+      let failures = 0;
+      results.forEach((r, i) => {
+        if (r.status === 'fulfilled') feed[key(state.artists[i])] = r.value;
+        else { failures++; feed[key(state.artists[i])] = state.feed[key(state.artists[i])] || []; }
+      });
+      if (failures === results.length) throw new Error('All requests failed');
+      dispatch({ type: 'FETCH_OK', feed });
+    } catch (err) {
+      dispatch({ type: 'FETCH_FAIL', error: err.message });
+    } finally {
+      inflight = null;
+    }
+  })();
+  return inflight;
+}
+
+// ---------- selectors ----------
+function visibleItems(s) {
+  const keys = s.filter === 'all' ? s.artists.map(key) : [s.filter];
+  const seenTitles = new Set();
+  return keys
+    .flatMap((k) => s.feed[k] || [])
+    .sort((a, b) => b.ts - a.ts)
+    .filter((i) => (seenTitles.has(i.title) ? false : (seenTitles.add(i.title), true)))
+    .map((i) => ({ ...i, isNew: i.ts > (s.lastSeen[key(i.artist)] ?? 0) }));
+}
+
+function unreadCount(s, artist) {
+  return (s.feed[key(artist)] || []).filter((i) => i.ts > (s.lastSeen[key(artist)] ?? 0)).length;
+}
+
+// ---------- view ----------
+const $ = (id) => document.getElementById(id);
+const el = (tag, props = {}, ...children) => {
+  const node = Object.assign(document.createElement(tag), props);
+  children.flat().forEach((c) => node.append(c));
+  return node;
+};
+
+function timeAgo(ts) {
+  if (!ts) return '';
+  const m = Math.max(0, Math.round((Date.now() - ts) / 60000));
+  if (m < 60) return `${m || 1}m ago`;
+  const h = Math.round(m / 60);
+  return h < 24 ? `${h}h ago` : `${Math.round(h / 24)}d ago`;
+}
+
+function renderChips() {
+  const chips = [];
+  const all = el('button', { className: 'chip', type: 'button', textContent: 'All' });
+  all.setAttribute('aria-pressed', String(state.filter === 'all'));
+  all.onclick = () => dispatch({ type: 'SET_FILTER', filter: 'all' });
+  if (state.artists.length) chips.push(all);
+
+  state.artists.forEach((name) => {
+    const chip = el('span', { className: 'chip', role: 'button', tabIndex: 0 }, name);
+    chip.setAttribute('aria-pressed', String(state.filter === key(name)));
+    const n = unreadCount(state, name);
+    if (n) chip.append(el('span', { className: 'count', textContent: String(n) }));
+    const x = el('span', { className: 'x', textContent: '✕', title: `Remove ${name}` });
+    x.onclick = (e) => { e.stopPropagation(); dispatch({ type: 'REMOVE_ARTIST', name }); };
+    chip.append(x);
+    const select = () => dispatch({ type: 'SET_FILTER', filter: key(name) });
+    chip.onclick = select;
+    chip.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); select(); } };
+    chips.push(chip);
+  });
+  $('chips').replaceChildren(...chips);
+}
+
+function renderFeed() {
+  const items = visibleItems(state);
+  $('feed').replaceChildren(...items.map((i) => {
+    const link = el('a', { href: i.link, target: '_blank', rel: 'noopener noreferrer', textContent: i.title });
+    const meta = el('div', { className: 'meta' },
+      el('span', { className: 'tag', textContent: i.artist }),
+      i.source ? el('span', { textContent: i.source }) : '',
+      el('span', { textContent: timeAgo(i.ts) }),
+      i.isNew ? el('span', { className: 'badge', textContent: 'NEW' }) : '');
+    return el('li', {}, link, meta);
+  }));
+
+  const msg = $('message');
+  msg.className = '';
+  msg.textContent = '';
+  if (!state.artists.length) {
+    msg.className = 'empty';
+    msg.textContent = 'Add your daughter’s favorite artists above to start tracking.';
+  } else if (state.status === 'error') {
+    msg.className = 'error';
+    msg.textContent = `Couldn’t load updates (${state.error}). Try Refresh.`;
+  } else if (state.status === 'ready' && !items.length) {
+    msg.className = 'empty';
+    msg.textContent = 'No recent updates found.';
+  }
+}
+
+function renderStatus() {
+  $('status').textContent =
+    state.status === 'loading' ? 'Updating…'
+    : state.updatedAt ? `Updated ${timeAgo(state.updatedAt)}` : '';
+  $('refresh').disabled = state.status === 'loading';
+}
+
+function render() { renderChips(); renderFeed(); renderStatus(); }
+
+// ---------- wiring ----------
+$('add-form').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const input = $('artist-input');
+  dispatch({ type: 'ADD_ARTIST', name: input.value });
+  input.value = '';
+});
+$('refresh').onclick = refresh;
+$('mark-read').onclick = () => dispatch({ type: 'MARK_SEEN' });
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && (!state.updatedAt || Date.now() - state.updatedAt > REFRESH_MS)) refresh();
+});
+setInterval(refresh, REFRESH_MS);
+
+render();
+refresh();
+</script>
+</body>
+</html>
