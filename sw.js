@@ -1,4 +1,4 @@
-const VERSION = 'v1';
+const VERSION = 'v2';
 const SHELL_CACHE = `kpop-shell-${VERSION}`;
 const API_CACHE = `kpop-api-${VERSION}`;
 const SHELL_ASSETS = [
@@ -52,6 +52,46 @@ async function staleWhileRevalidate(request, cacheName) {
     .catch(() => null);
   return cached || (await refresh) || Response.error();
 }
+
+// ---------- web push ----------
+self.addEventListener('push', (event) => {
+  let data = {};
+  try {
+    data = event.data ? event.data.json() : {};
+  } catch {
+    data = { body: event.data ? event.data.text() : '' };
+  }
+  event.waitUntil(
+    self.registration.showNotification(data.title || 'K-Pop Tracker', {
+      body: data.body || '',
+      icon: '/icons/icon-192.png',
+      badge: '/icons/icon-192.png',
+      tag: data.tag || 'kpop-news',
+      renotify: true,
+      data: { url: data.url || '/' },
+    })
+  );
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const raw = (event.notification.data && event.notification.data.url) || '/';
+  let target;
+  try {
+    target = new URL(raw, self.location.origin);
+  } catch {
+    target = new URL('/', self.location.origin);
+  }
+  if (target.protocol !== 'https:') target = new URL('/', self.location.origin);
+
+  event.waitUntil((async () => {
+    if (target.origin !== self.location.origin) return self.clients.openWindow(target.href);
+    const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    const app = wins.find((w) => new URL(w.url).origin === self.location.origin);
+    if (app) return app.focus();
+    return self.clients.openWindow(target.href);
+  })());
+});
 
 self.addEventListener('fetch', (event) => {
   const { request } = event;

@@ -30,6 +30,12 @@
   .ios-hint { display: none; margin: 8px 0 0; padding: 8px 12px; border-radius: 12px; border: 1px dashed var(--line);
               color: var(--muted); font-size: .85rem; }
   .ios-hint.visible { display: block; }
+  .notify-row { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 10px;
+                font-size: .85rem; color: var(--muted); }
+  #notify { display: none; }
+  #notify.visible { display: inline-block; }
+  #notify.on { background: transparent; color: var(--ink); border: 1px solid var(--line); }
+  #notify:disabled { opacity: .6; cursor: progress; }
   h1 { margin: 0 0 12px; font-size: 1.5rem; background: linear-gradient(90deg, var(--accent), var(--accent-2));
        -webkit-background-clip: text; background-clip: text; color: transparent; }
   main { max-width: 760px; margin: 0 auto; padding: 0 16px 48px; }
@@ -67,6 +73,10 @@
     <button type="button" id="install">Install</button>
   </form>
   <p id="ios-hint" class="ios-hint">To install: tap <strong>Share</strong>, then <strong>Add to Home Screen</strong>.</p>
+  <div class="notify-row">
+    <button type="button" id="notify"></button>
+    <span id="notify-msg" role="status"></span>
+  </div>
 </header>
 <main>
   <div id="chips" class="chips"></div>
@@ -124,6 +134,7 @@ const initial = () => ({
   status: 'idle',           // 'idle' | 'loading' | 'ready' | 'error'
   error: null,
   updatedAt: null,
+  notif: 'checking',        // 'checking' | 'off' | 'on' | 'busy' | 'denied' | 'ios-install' | 'unsupported' | 'error'
 });
 
 function reducer(state, action) {
@@ -163,6 +174,8 @@ function reducer(state, action) {
       return { ...state, status: 'ready', feed: action.feed, updatedAt: Date.now(), error: null };
     case 'FETCH_FAIL':
       return { ...state, status: 'error', error: action.error };
+    case 'NOTIF_STATUS':
+      return state.notif === action.status ? state : { ...state, notif: action.status };
     default:
       return state;
   }
@@ -174,6 +187,7 @@ function dispatch(action) {
   state = reducer(state, action);
   if (state.artists !== prev.artists || state.lastSeen !== prev.lastSeen) Storage.save(state);
   render();
+  if (state.artists !== prev.artists) Push.syncSoon();
   if (action.type === 'ADD_ARTIST' && state.artists !== prev.artists) refresh();
 }
 
@@ -291,7 +305,28 @@ function renderStatus() {
   $('refresh').disabled = state.status === 'loading';
 }
 
-function render() { renderChips(); renderFeed(); renderStatus(); }
+const NOTIF_UI = {
+  checking:       { button: null,                   msg: '' },
+  off:            { button: 'Turn on notifications', msg: '' },
+  on:             { button: 'Turn off notifications', msg: 'You’ll get an alert when there’s news for your artists.' },
+  busy:           { button: 'Working…',              msg: '' },
+  denied:         { button: null,                   msg: 'Notifications are blocked. Allow them in this site’s browser settings, then reload.' },
+  'ios-install':  { button: null,                   msg: 'To get notifications on iPhone/iPad, add this app to the Home Screen and open it from there.' },
+  unsupported:    { button: null,                   msg: 'Notifications aren’t supported in this browser.' },
+  error:          { button: 'Try notifications again', msg: 'Couldn’t set up notifications. Check your connection and try again.' },
+};
+
+function renderNotify() {
+  const ui = NOTIF_UI[state.notif];
+  const btn = $('notify');
+  btn.classList.toggle('visible', Boolean(ui.button));
+  btn.classList.toggle('on', state.notif === 'on');
+  btn.disabled = state.notif === 'busy';
+  btn.textContent = ui.button ? `🔔 ${ui.button}` : '';
+  $('notify-msg').textContent = ui.msg;
+}
+
+function render() { renderChips(); renderFeed(); renderStatus(); renderNotify(); }
 
 // ---------- wiring ----------
 $('add-form').addEventListener('submit', (e) => {
@@ -308,11 +343,12 @@ document.addEventListener('visibilitychange', () => {
 setInterval(refresh, REFRESH_MS);
 
 // ---------- PWA install ----------
+const isStandalone = () =>
+  window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+const isIos = () => /iphone|ipad|ipod/i.test(navigator.userAgent) ||
+  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
 const Pwa = (() => {
-  const isStandalone = () =>
-    window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
-  const isIos = () => /iphone|ipad|ipod/i.test(navigator.userAgent) ||
-    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
   let deferredPrompt = null;
 
   function init() {
@@ -344,7 +380,104 @@ const Pwa = (() => {
   return { init };
 })();
 
+// ---------- web push ----------
+const PUSH_API = 'https://oflhzazgxhzvxobhxhfn.supabase.co/functions/v1/push';
+
+const Push = (() => {
+  const supported = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+  const setStatus = (status) => dispatch({ type: 'NOTIF_STATUS', status });
+
+  const post = async (path, body) => {
+    const res = await fetch(`${PUSH_API}/${path}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  };
+
+  const keyToBytes = (b64url) => {
+    const b64 = (b64url + '='.repeat((4 - (b64url.length % 4)) % 4)).replace(/-/g, '+').replace(/_/g, '/');
+    return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+  };
+
+  const getSubscription = async () => (await navigator.serviceWorker.ready).pushManager.getSubscription();
+
+  async function sync() {
+    const sub = await getSubscription();
+    if (sub) await post('subscribe', { subscription: sub.toJSON(), artists: state.artists });
+  }
+
+  let syncTimer = null;
+  function syncSoon() {
+    if (state.notif !== 'on') return;
+    clearTimeout(syncTimer);
+    syncTimer = setTimeout(() => sync().catch(() => { /* retried on next change or app open */ }), 600);
+  }
+
+  async function enable() {
+    setStatus('busy');
+    try {
+      const permission = await Notification.requestPermission();
+      if (permission !== 'granted') return setStatus(permission === 'denied' ? 'denied' : 'off');
+
+      const { publicKey } = await fetch(`${PUSH_API}/vapid-public-key`).then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+      });
+      const reg = await navigator.serviceWorker.ready;
+      const sub = (await reg.pushManager.getSubscription()) ||
+        (await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyToBytes(publicKey) }));
+      await post('subscribe', { subscription: sub.toJSON(), artists: state.artists });
+      setStatus('on');
+      reg.showNotification('Notifications are on', {
+        body: 'We’ll let you know when there’s news for your artists.',
+        icon: '/icons/icon-192.png',
+        badge: '/icons/icon-192.png',
+      });
+    } catch {
+      setStatus('error');
+    }
+  }
+
+  async function disable() {
+    setStatus('busy');
+    try {
+      const sub = await getSubscription();
+      if (sub) {
+        await post('unsubscribe', { endpoint: sub.endpoint }).catch(() => { /* server prunes dead endpoints */ });
+        await sub.unsubscribe();
+      }
+      setStatus('off');
+    } catch {
+      setStatus('error');
+    }
+  }
+
+  async function init() {
+    $('notify').addEventListener('click', () => (state.notif === 'on' ? disable() : enable()));
+
+    if (!supported()) return setStatus(isIos() && !isStandalone() ? 'ios-install' : 'unsupported');
+    if (Notification.permission === 'denied') return setStatus('denied');
+
+    try {
+      const sub = await getSubscription();
+      if (sub && Notification.permission === 'granted') {
+        setStatus('on');
+        sync().catch(() => { /* retried on next change or app open */ });
+      } else {
+        setStatus('off');
+      }
+    } catch {
+      setStatus('off');
+    }
+  }
+
+  return { init, syncSoon };
+})();
+
 Pwa.init();
+Push.init();
 render();
 refresh();
 </script>
