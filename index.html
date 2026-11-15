@@ -4,6 +4,15 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>K-Pop Tracker</title>
+<meta name="theme-color" content="#e0479e">
+<meta name="description" content="Latest news and updates for your favorite K-pop artists.">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="K-Pop">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <style>
   :root {
     --bg: #fff7fb; --card: #ffffff; --ink: #2a1f2d; --muted: #7d6b82;
@@ -13,8 +22,14 @@
     :root { --bg: #17101c; --card: #221829; --ink: #f6eaf8; --muted: #a894b0; --line: #35253f; }
   }
   * { box-sizing: border-box; }
-  body { margin: 0; font: 16px/1.45 system-ui, sans-serif; background: var(--bg); color: var(--ink); }
+  body { margin: 0; font: 16px/1.45 system-ui, sans-serif; background: var(--bg); color: var(--ink);
+         padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
   header { padding: 20px 16px 8px; max-width: 760px; margin: 0 auto; }
+  #install { display: none; margin-left: 8px; background: var(--accent-2); }
+  #install.visible { display: inline-block; }
+  .ios-hint { display: none; margin: 8px 0 0; padding: 8px 12px; border-radius: 12px; border: 1px dashed var(--line);
+              color: var(--muted); font-size: .85rem; }
+  .ios-hint.visible { display: block; }
   h1 { margin: 0 0 12px; font-size: 1.5rem; background: linear-gradient(90deg, var(--accent), var(--accent-2));
        -webkit-background-clip: text; background-clip: text; color: transparent; }
   main { max-width: 760px; margin: 0 auto; padding: 0 16px 48px; }
@@ -49,7 +64,9 @@
   <form id="add-form" autocomplete="off">
     <input id="artist-input" placeholder="Add an artist or group (e.g. NewJeans, Stray Kids)" maxlength="60" required>
     <button type="submit">Add</button>
+    <button type="button" id="install">Install</button>
   </form>
+  <p id="ios-hint" class="ios-hint">To install: tap <strong>Share</strong>, then <strong>Add to Home Screen</strong>.</p>
 </header>
 <main>
   <div id="chips" class="chips"></div>
@@ -290,6 +307,44 @@ document.addEventListener('visibilitychange', () => {
 });
 setInterval(refresh, REFRESH_MS);
 
+// ---------- PWA install ----------
+const Pwa = (() => {
+  const isStandalone = () =>
+    window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+  const isIos = () => /iphone|ipad|ipod/i.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  let deferredPrompt = null;
+
+  function init() {
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js').catch(() => { /* offline support unavailable */ });
+    }
+    if (isStandalone()) return;
+
+    const btn = $('install');
+    window.addEventListener('beforeinstallprompt', (e) => {
+      e.preventDefault();
+      deferredPrompt = e;
+      btn.classList.add('visible');
+    });
+    btn.addEventListener('click', async () => {
+      if (!deferredPrompt) return;
+      deferredPrompt.prompt();
+      await deferredPrompt.userChoice;
+      deferredPrompt = null;
+      btn.classList.remove('visible');
+    });
+    window.addEventListener('appinstalled', () => {
+      deferredPrompt = null;
+      btn.classList.remove('visible');
+      $('ios-hint').classList.remove('visible');
+    });
+    if (isIos()) $('ios-hint').classList.add('visible');
+  }
+  return { init };
+})();
+
+Pwa.init();
 render();
 refresh();
 </script>

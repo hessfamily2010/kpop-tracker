@@ -1,0 +1,18 @@
+{
+  "name": "K-Pop Tracker",
+  "short_name": "K-Pop",
+  "description": "Latest news and updates for your favorite K-pop artists.",
+  "id": "/",
+  "start_url": "/?source=pwa",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#17101c",
+  "theme_color": "#e0479e",
+  "categories": ["music", "entertainment", "news"],
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
