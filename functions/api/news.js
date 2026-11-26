@@ -1,46 +1,25 @@
-const decode = (s) =>
-  s
-    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
-    .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"').replace(/&#39;/g, "'")
-    .replace(/&amp;/g, '&')
-    .trim();
+import { loadArtist, prepareItems } from '../../lib/feed.js';
+import { MAX_NAME_LENGTH } from '../../lib/settings.js';
 
-const tag = (block, name) => {
-  const m = block.match(new RegExp(`<${name}[^>]*>([\\s\\S]*?)</${name}>`));
-  return m ? decode(m[1]) : '';
-};
-
-const json = (body, status = 200) =>
+const json = (body, status = 200, cacheSeconds = 0) =>
   new Response(JSON.stringify(body), {
     status,
     headers: {
       'content-type': 'application/json',
-      'cache-control': 'public, max-age=900',
+      'cache-control': cacheSeconds ? `public, max-age=${cacheSeconds}` : 'no-store',
     },
   });
 
+const flag = (params, name) => params.get(name) !== '0'; // on unless explicitly "0"
+
 export async function onRequestGet({ request }) {
-  const q = (new URL(request.url).searchParams.get('q') || '').trim();
-  if (!q || q.length > 80) return json({ error: 'Invalid query' }, 400);
+  const params = new URL(request.url).searchParams;
+  const artist = (params.get('q') ?? '').trim().replace(/\s+/g, ' ');
+  if (!artist || artist.length > MAX_NAME_LENGTH) return json({ error: 'Invalid query' }, 400);
 
-  const feed =
-    'https://news.google.com/rss/search?hl=en-US&gl=US&ceid=US:en&q=' +
-    encodeURIComponent(`${q} kpop when:14d`);
+  const { news, releases } = await loadArtist(artist, { windowDays: 14, releases: flag(params, 'releases') });
+  if (news === null && releases === null) return json({ error: 'Upstream unavailable' }, 502);
 
-  const res = await fetch(feed, { cf: { cacheTtl: 900, cacheEverything: true } });
-  if (!res.ok) return json({ error: `Upstream ${res.status}` }, 502);
-
-  const xml = await res.text();
-  const items = [...xml.matchAll(/<item>([\s\S]*?)<\/item>/g)]
-    .slice(0, 25)
-    .map(([, block]) => ({
-      title: tag(block, 'title'),
-      link: tag(block, 'link'),
-      date: tag(block, 'pubDate'),
-      source: tag(block, 'source'),
-    }))
-    .filter((i) => i.title && i.link.startsWith('https://'));
-
-  return json({ artist: q, items });
+  const items = prepareItems([...(news ?? []), ...(releases ?? [])], { safe: flag(params, 'safe') });
+  return json({ artist, items: items.slice(0, 40), partial: news === null || releases === null }, 200, 600);
 }

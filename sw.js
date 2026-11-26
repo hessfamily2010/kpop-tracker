@@ -1,8 +1,21 @@
-const VERSION = 'v2';
+const VERSION = 'v3';
 const SHELL_CACHE = `kpop-shell-${VERSION}`;
 const API_CACHE = `kpop-api-${VERSION}`;
 const SHELL_ASSETS = [
   '/',
+  '/styles.css',
+  '/config.js',
+  '/artists.js',
+  '/lib/settings.js',
+  '/js/main.js',
+  '/js/api.js',
+  '/js/push.js',
+  '/js/pwa.js',
+  '/js/state.js',
+  '/js/storage.js',
+  '/js/store.js',
+  '/js/sync.js',
+  '/js/ui.js',
   '/manifest.webmanifest',
   '/icons/icon-192.png',
   '/icons/icon-512.png',
@@ -13,8 +26,12 @@ self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(SHELL_CACHE)
       .then((cache) => cache.addAll(SHELL_ASSETS))
-      .then(() => self.skipWaiting())
   );
+});
+
+// A new worker waits until the page asks it to take over (the "Update" button).
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'SKIP_WAITING') self.skipWaiting();
 });
 
 self.addEventListener('activate', (event) => {
@@ -66,6 +83,7 @@ self.addEventListener('push', (event) => {
       body: data.body || '',
       icon: '/icons/icon-192.png',
       badge: '/icons/icon-192.png',
+      image: typeof data.image === 'string' && data.image.startsWith('https://') ? data.image : undefined,
       tag: data.tag || 'kpop-news',
       renotify: true,
       data: { url: data.url || '/' },
