@@ -19,12 +19,14 @@ export async function onRequestGet({ request }) {
 
   if (params.get('debug') === '1') {
     const out = {};
+    const BROWSER = { 'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130 Safari/537.36', accept: 'application/rss+xml, application/xml, text/xml, */*' };
+    const G = 'https://news.google.com/rss/search?hl=en-US&gl=US&ceid=US:en&q=ive+kpop';
     const tests = [
-      ['news_noua', 'https://news.google.com/rss/search?hl=en-US&gl=US&ceid=US:en&q=ive', {}],
-      ['news_cf', 'https://news.google.com/rss/search?hl=en-US&gl=US&ceid=US:en&q=ive', { cf: { cacheTtl: 900, cacheEverything: true } }],
-      ['news_ua', 'https://news.google.com/rss/search?hl=en-US&gl=US&ceid=US:en&q=ive', { headers: { 'user-agent': 'kpop-tracker/2.0' } }],
-      ['itunes_noua', 'https://itunes.apple.com/search?term=ive&limit=1', {}],
-      ['itunes_cf', 'https://itunes.apple.com/search?term=ive&media=music&entity=album&limit=1', { cf: { cacheTtl: 900, cacheEverything: true } }],
+      ['google_browserua', G, { headers: BROWSER }],
+      ['bing_rss', 'https://www.bing.com/news/search?q=IVE+kpop&format=rss', { headers: BROWSER }],
+      ['bing_rss_noua', 'https://www.bing.com/news/search?q=IVE+kpop&format=rss', {}],
+      ['itunes_browserua', 'https://itunes.apple.com/search?term=ive&media=music&entity=album&limit=1', { headers: BROWSER }],
+      ['itunes_lookup_host', 'https://itunes.apple.com/lookup?id=1&limit=1', {}],
     ];
     for (const [k, u, init] of tests) {
       try { out[k] = (await fetch(u, init)).status; } catch (e) { out[k] = String(e); }
