@@ -19,18 +19,11 @@ export async function onRequestGet({ request }) {
 
   if (params.get('debug') === '1') {
     const out = {};
-    const BROWSER = { 'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130 Safari/537.36', accept: 'application/rss+xml, application/xml, text/xml, */*' };
-    const G = 'https://news.google.com/rss/search?hl=en-US&gl=US&ceid=US:en&q=ive+kpop';
-    const tests = [
-      ['google_browserua', G, { headers: BROWSER }],
-      ['bing_rss', 'https://www.bing.com/news/search?q=IVE+kpop&format=rss', { headers: BROWSER }],
-      ['bing_rss_noua', 'https://www.bing.com/news/search?q=IVE+kpop&format=rss', {}],
-      ['itunes_browserua', 'https://itunes.apple.com/search?term=ive&media=music&entity=album&limit=1', { headers: BROWSER }],
-      ['itunes_lookup_host', 'https://itunes.apple.com/lookup?id=1&limit=1', {}],
-    ];
-    for (const [k, u, init] of tests) {
-      try { out[k] = (await fetch(u, init)).status; } catch (e) { out[k] = String(e); }
-    }
+    const r = await fetch('https://www.bing.com/news/search?q=%22IVE%22+kpop&format=rss&qft=sortbydate%3d%221%22');
+    const t = await r.text();
+    out.status = r.status;
+    out.items = (t.match(/<item>/g) || []).length;
+    out.sample = t.slice(t.indexOf('<item>'), t.indexOf('<item>') + 1400);
     try { out.abort = typeof AbortController + typeof AbortSignal.timeout; } catch (e) { out.abort = String(e); }
     return json(out);
   }
