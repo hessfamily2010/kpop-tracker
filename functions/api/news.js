@@ -17,6 +17,14 @@ export async function onRequestGet({ request }) {
   const artist = (params.get('q') ?? '').trim().replace(/\s+/g, ' ');
   if (!artist || artist.length > MAX_NAME_LENGTH) return json({ error: 'Invalid query' }, 400);
 
+  if (params.get('debug') === '1') {
+    const out = {};
+    for (const [k, u] of [['news', 'https://news.google.com/rss/search?q=ive'], ['itunes', 'https://itunes.apple.com/search?term=ive&limit=1']]) {
+      try { const r = await fetch(u, { headers: { 'user-agent': 'kpop-tracker/2.0' } }); out[k] = r.status; } catch (e) { out[k] = String(e); }
+    }
+    try { out.abort = typeof AbortController + typeof AbortSignal.timeout; } catch (e) { out.abort = String(e); }
+    return json(out);
+  }
   const { news, releases } = await loadArtist(artist, { windowDays: 14, releases: flag(params, 'releases') });
   if (news === null && releases === null) return json({ error: 'Upstream unavailable' }, 502);
 
