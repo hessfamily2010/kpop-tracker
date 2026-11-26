@@ -19,8 +19,15 @@ export async function onRequestGet({ request }) {
 
   if (params.get('debug') === '1') {
     const out = {};
-    for (const [k, u] of [['news', 'https://news.google.com/rss/search?q=ive'], ['itunes', 'https://itunes.apple.com/search?term=ive&limit=1']]) {
-      try { const r = await fetch(u, { headers: { 'user-agent': 'kpop-tracker/2.0' } }); out[k] = r.status; } catch (e) { out[k] = String(e); }
+    const tests = [
+      ['news_noua', 'https://news.google.com/rss/search?hl=en-US&gl=US&ceid=US:en&q=ive', {}],
+      ['news_cf', 'https://news.google.com/rss/search?hl=en-US&gl=US&ceid=US:en&q=ive', { cf: { cacheTtl: 900, cacheEverything: true } }],
+      ['news_ua', 'https://news.google.com/rss/search?hl=en-US&gl=US&ceid=US:en&q=ive', { headers: { 'user-agent': 'kpop-tracker/2.0' } }],
+      ['itunes_noua', 'https://itunes.apple.com/search?term=ive&limit=1', {}],
+      ['itunes_cf', 'https://itunes.apple.com/search?term=ive&media=music&entity=album&limit=1', { cf: { cacheTtl: 900, cacheEverything: true } }],
+    ];
+    for (const [k, u, init] of tests) {
+      try { out[k] = (await fetch(u, init)).status; } catch (e) { out[k] = String(e); }
     }
     try { out.abort = typeof AbortController + typeof AbortSignal.timeout; } catch (e) { out.abort = String(e); }
     return json(out);
