@@ -55,7 +55,7 @@ export class Hub extends DurableObject {
         last_run INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL
       );
       CREATE INDEX IF NOT EXISTS subs_profile ON subs (profile);
-      CREATE TABLE IF NOT EXISTS channels (
+      CREATE TABLE IF NOT EXISTS channels_v2 (
         artist TEXT PRIMARY KEY, channel_id TEXT, title TEXT, checked_at INTEGER NOT NULL
       );
     `);
@@ -176,13 +176,13 @@ export class Hub extends DurableObject {
   /** Channel for an artist, resolved once via the Search API (100 quota units) and then remembered. */
   async #channel(artist, fetchImpl) {
     const key = normalizeName(artist);
-    const row = this.sql.exec('SELECT channel_id, title, checked_at FROM channels WHERE artist = ?', key).toArray()[0];
+    const row = this.sql.exec('SELECT channel_id, title, checked_at FROM channels_v2 WHERE artist = ?', key).toArray()[0];
     const retryAfter = 7 * 86_400_000; // re-search a "no channel found" result weekly
     if (row?.channel_id) return { id: row.channel_id, title: row.title };
     if (row && Date.now() - row.checked_at < retryAfter) return null;
     const found = await resolveChannel(artist, this.env.YOUTUBE_API_KEY, { fetchImpl, base: this.env.YT_BASE ?? YT_BASE });
     this.sql.exec(
-      'INSERT OR REPLACE INTO channels (artist, channel_id, title, checked_at) VALUES (?, ?, ?, ?)',
+      'INSERT OR REPLACE INTO channels_v2 (artist, channel_id, title, checked_at) VALUES (?, ?, ?, ?)',
       key, found?.id ?? null, found?.title ?? null, Date.now(),
     );
     return found;
