@@ -2,10 +2,30 @@
 
 import { normalizeName, resolveArtist } from '../artists.js';
 import { MAX_ARTISTS, sanitizeArtists, sanitizeSettings } from '../lib/settings.js';
+import { isUpcoming } from '../lib/text.js';
 
 const DAY_MS = 86_400_000;
 
 export const keyOf = normalizeName;
+export const VIEW_SAVED = '@saved';
+export const VIEW_UPCOMING = '@upcoming';
+export const MAX_SAVED = 100;
+const isView = (filter) => filter === VIEW_SAVED || filter === VIEW_UPCOMING;
+
+/** Keep only well-formed saved items (stored in localStorage, so never trust the shape). */
+export function sanitizeSaved(list) {
+  if (!Array.isArray(list)) return [];
+  return list
+    .filter((i) => i && typeof i.id === 'string' && typeof i.title === 'string' && typeof i.link === 'string' && i.link.startsWith('https://'))
+    .slice(0, MAX_SAVED)
+    .map((i) => ({
+      id: i.id, type: ['news', 'release', 'video'].includes(i.type) ? i.type : 'news', artist: String(i.artist ?? ''),
+      title: i.title.slice(0, 300), link: i.link, source: String(i.source ?? '').slice(0, 80),
+      ts: Number(i.ts) || 0, savedAt: Number(i.savedAt) || 0,
+      image: typeof i.image === 'string' && i.image.startsWith('https://') ? i.image : undefined,
+    }));
+}
+
 const isLock = (l) => Boolean(l) && typeof l.salt === 'string' && typeof l.hash === 'string';
 
 export function initialState(saved = {}, { tz = 'UTC', online = true } = {}) {
@@ -18,10 +38,11 @@ export function initialState(saved = {}, { tz = 'UTC', online = true } = {}) {
     dirty: saved.dirty === true,           // local edits not yet pushed to the sync profile
     notifyWanted: saved.notifyWanted === true,
     lock: isLock(saved.lock) ? saved.lock : null, // parent PIN { salt, hash } — per device, never synced
+    saved: sanitizeSaved(saved.saved),             // bookmarked items, per device
     unlocked: false,                               // lasts until the page is closed
 
     feed: {},                // artist key -> items
-    filter: 'all',           // 'all' | artist key
+    filter: 'all',           // 'all' | '@saved' | '@upcoming' | artist key
     status: 'idle',          // 'idle' | 'loading' | 'ready' | 'error'
     error: null,
     fetchedAt: null,
@@ -44,6 +65,7 @@ export const persistable = (s) => ({
   dirty: s.dirty,
   notifyWanted: s.notifyWanted,
   lock: s.lock,
+  saved: s.saved,
 });
 
 const withoutKeys = (obj, keep) => Object.fromEntries(Object.entries(obj).filter(([k]) => keep.has(k)));
@@ -108,7 +130,7 @@ export function reducer(state, action) {
         settings: sanitizeSettings(action.settings),
         lastSeen,
         feed: withoutKeys(state.feed, keep),
-        filter: state.filter === 'all' || keep.has(state.filter) ? state.filter : 'all',
+        filter: state.filter === 'all' || isView(state.filter) || keep.has(state.filter) ? state.filter : 'all',
         syncedAt: action.updatedAt,
         dirty: false,
       };
@@ -128,13 +150,22 @@ export function reducer(state, action) {
     case 'RELOCK':
       return state.unlocked ? { ...state, unlocked: false } : state;
 
+    case 'TOGGLE_SAVE': {
+      const { item, now } = action;
+      if (state.saved.some((i) => i.id === item.id)) return { ...state, saved: state.saved.filter((i) => i.id !== item.id) };
+      const [entry] = sanitizeSaved([{ ...item, savedAt: now }]);
+      if (!entry) return state;
+      if (state.saved.length >= MAX_SAVED) return { ...state, notice: `You can save up to ${MAX_SAVED} items.` };
+      return { ...state, saved: [entry, ...state.saved], notice: null };
+    }
+
     case 'SET_FILTER':
       return { ...state, filter: action.filter };
     case 'CLEAR_NOTICE':
       return state.notice ? { ...state, notice: null } : state;
 
     case 'MARK_SEEN': {
-      const targets = state.filter === 'all' ? state.artists : state.artists.filter((a) => keyOf(a) === state.filter);
+      const targets = state.filter === 'all' || isView(state.filter) ? state.artists : state.artists.filter((a) => keyOf(a) === state.filter);
       const lastSeen = { ...state.lastSeen };
       for (const a of targets) lastSeen[keyOf(a)] = action.now;
       return { ...state, lastSeen };
@@ -166,11 +197,15 @@ export function reducer(state, action) {
 }
 
 // ---------- selectors ----------
+const allFeedItems = (state) => state.artists.flatMap((a) => state.feed[keyOf(a)] ?? []);
+
 export function visibleItems(state, limit = 60) {
-  const keys = state.filter === 'all' ? state.artists.map(keyOf) : [state.filter];
+  if (state.filter === VIEW_SAVED) return state.saved.map((i) => ({ ...i, isNew: false }));
+  const pool = state.filter === VIEW_UPCOMING
+    ? allFeedItems(state).filter((i) => i.type === 'news' && isUpcoming(i.title))
+    : (state.filter === 'all' ? state.artists.map(keyOf) : [state.filter]).flatMap((k) => state.feed[k] ?? []);
   const seen = new Set();
-  return keys
-    .flatMap((k) => state.feed[k] ?? [])
+  return pool
     .sort((a, b) => b.ts - a.ts)
     .filter((i) => {
       if (seen.has(i.id) || seen.has(i.title)) return false;
@@ -191,3 +226,27 @@ export function unreadCount(state, artist) {
 export const settingsLocked = (state) => Boolean(state.lock) && !state.unlocked;
 
 export const isMuted = (state, artist) => state.settings.muted.some((m) => keyOf(m) === keyOf(artist));
+
+export const isSaved = (state, id) => state.saved.some((i) => i.id === id);
+
+export const upcomingCount = (state) => allFeedItems(state).filter((i) => i.type === 'news' && isUpcoming(i.title)).length;
+
+/** Everything unread across all followed artists (drives the app-icon badge). */
+export const totalUnread = (state) => state.artists.reduce((n, a) => n + unreadCount(state, a), 0);
+
+/** Summary shown above the feed when a single artist is selected. */
+export function profileFor(state) {
+  if (state.filter === 'all' || isView(state.filter)) return null;
+  const name = state.artists.find((a) => keyOf(a) === state.filter);
+  if (!name) return null;
+  const items = [...(state.feed[state.filter] ?? [])].sort((a, b) => b.ts - a.ts);
+  const first = (type) => items.find((i) => i.type === type) ?? null;
+  return {
+    name,
+    latestVideo: first('video'),
+    latestRelease: first('release'),
+    newsCount: items.filter((i) => i.type === 'news').length,
+    unread: unreadCount(state, name),
+    muted: isMuted(state, name),
+  };
+}

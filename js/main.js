@@ -7,7 +7,7 @@ import { createLock, isValidPin, verifyPin } from './lock.js';
 import { createStore } from './store.js';
 import { createSync } from './sync.js';
 import { createUi } from './ui.js';
-import { initialState, keyOf, persistable } from './state.js';
+import { initialState, keyOf, persistable, totalUnread } from './state.js';
 import { loadSaved, save } from './storage.js';
 
 const REFRESH_MS = 15 * 60 * 1000;
@@ -53,6 +53,7 @@ const ui = createUi({
   setFilter: (filter) => store.dispatch({ type: 'SET_FILTER', filter }),
   markSeen: () => store.dispatch({ type: 'MARK_SEEN', now: Date.now() }),
   patchSettings: (patch) => store.dispatch({ type: 'PATCH_SETTINGS', patch }),
+  toggleSave: (item) => store.dispatch({ type: 'TOGGLE_SAVE', item, now: Date.now() }),
   toggleMute: (name) => store.dispatch({ type: 'TOGGLE_MUTE', name }),
   unlock: async (pin) => {
     const ok = await verifyPin(pin, store.get().lock);
@@ -84,8 +85,16 @@ const ui = createUi({
 // ---------- reactions to state changes ----------
 const feedInputs = (s) => JSON.stringify([s.artists.map(keyOf), s.settings.safe, s.settings.releases]);
 
+/** Unread count on the installed app's icon (where the browser supports it). */
+function updateBadge(s) {
+  if (!('setAppBadge' in navigator)) return;
+  const n = totalUnread(s);
+  (n ? navigator.setAppBadge(n) : navigator.clearAppBadge()).catch(() => {});
+}
+
 store.subscribe((s, prev, action) => {
   ui.render(s);
+  updateBadge(s);
   if (s.dirty && (!prev.dirty || s.artists !== prev.artists || s.settings !== prev.settings)) sync.schedulePush();
   if (feedInputs(s) !== feedInputs(prev)) refresh();
   if (action.type === 'SET_ONLINE' && s.online) { sync.reconcile(); refresh(); }

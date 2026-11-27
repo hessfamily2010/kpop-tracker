@@ -1,4 +1,4 @@
-const VERSION = 'v6';
+const VERSION = 'v7';
 const SHELL_CACHE = `kpop-shell-${VERSION}`;
 const API_CACHE = `kpop-api-${VERSION}`;
 const SHELL_ASSETS = [
@@ -82,7 +82,9 @@ self.addEventListener('push', (event) => {
   } catch {
     data = { body: event.data ? event.data.text() : '' };
   }
-  event.waitUntil(
+  event.waitUntil(Promise.all([
+    // A dot on the app icon until the app is opened (the page sets the exact unread count).
+    self.navigator && self.navigator.setAppBadge ? self.navigator.setAppBadge().catch(() => {}) : null,
     self.registration.showNotification(data.title || 'K-Pop Tracker', {
       body: data.body || '',
       icon: '/icons/icon-192.png',
@@ -91,8 +93,8 @@ self.addEventListener('push', (event) => {
       tag: data.tag || 'kpop-news',
       renotify: true,
       data: { url: data.url || '/' },
-    })
-  );
+    }),
+  ]));
 });
 
 self.addEventListener('notificationclick', (event) => {

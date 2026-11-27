@@ -2,7 +2,7 @@
 
 import { suggest } from '../artists.js';
 import { MAX_ARTISTS } from '../lib/settings.js';
-import { isMuted, keyOf, settingsLocked, unreadCount, visibleItems } from './state.js';
+import { isMuted, isSaved, keyOf, profileFor, settingsLocked, unreadCount, upcomingCount, visibleItems, VIEW_SAVED, VIEW_UPCOMING } from './state.js';
 
 const $ = (id) => document.getElementById(id);
 const el = (tag, props = {}, ...children) => {
@@ -99,6 +99,19 @@ export function createUi(actions) {
       all.onclick = () => actions.setFilter('all');
       chips.push(all);
     }
+    if (s.artists.length || s.saved.length) {
+      const views = [
+        [VIEW_UPCOMING, '🗓 Coming up', upcomingCount(s)],
+        [VIEW_SAVED, '⭐ Saved', s.saved.length],
+      ];
+      for (const [view, label, count] of views) {
+        const chip = el('button', { className: 'chip', type: 'button', textContent: label });
+        chip.setAttribute('aria-pressed', String(s.filter === view));
+        if (count) chip.append(el('span', { className: 'count alt', textContent: String(count) }));
+        chip.onclick = () => actions.setFilter(view);
+        chips.push(chip);
+      }
+    }
     for (const name of s.artists) {
       const k = keyOf(name);
       const chip = el('span', { className: 'chip', role: 'button', tabIndex: 0 }, name);
@@ -120,7 +133,7 @@ export function createUi(actions) {
   const skeleton = () => Array.from({ length: 4 }, () => el('li', { className: 'skeleton', ariaHidden: 'true' },
     el('div', { className: 'bar-a' }), el('div', { className: 'bar-b' })));
 
-  function card(i) {
+  function card(i, s) {
     const link = el('a', { href: i.link, target: '_blank', rel: 'noopener noreferrer', textContent: i.title });
     const meta = el('div', { className: 'meta' },
       el('span', { className: 'tag', textContent: i.artist }),
@@ -132,19 +145,30 @@ export function createUi(actions) {
       i.isNew ? el('span', { className: 'badge', textContent: 'NEW' }) : null);
     const body = el('div', { className: 'body' }, link, meta);
     const art = i.image ? el('img', { src: i.image, alt: '', loading: 'lazy', width: 64, height: 64, className: i.type === 'video' ? 'art wide' : 'art' }) : null;
-    return el('li', { className: art ? 'has-art' : '' }, art, body);
+    const saved = isSaved(s, i.id);
+    const star = el('button', { className: `star${saved ? ' on' : ''}`, type: 'button', textContent: saved ? '★' : '☆', title: saved ? 'Remove from saved' : 'Save for later' });
+    star.setAttribute('aria-pressed', String(saved));
+    star.setAttribute('aria-label', saved ? `Remove “${i.title}” from saved` : `Save “${i.title}”`);
+    star.onclick = () => actions.toggleSave(i);
+    return el('li', { className: art ? 'has-art' : '' }, art, body, star);
   }
 
   function renderFeed(s) {
     const items = visibleItems(s);
     const loadingFirst = s.status === 'loading' && !items.length;
     feedEl.setAttribute('aria-busy', String(loadingFirst));
-    feedEl.replaceChildren(...(loadingFirst ? skeleton() : items.map(card)));
+    feedEl.replaceChildren(...(loadingFirst ? skeleton() : items.map((i) => card(i, s))));
 
     const msg = $('message');
     msg.className = '';
     msg.textContent = '';
-    if (!s.artists.length) {
+    if (s.filter === VIEW_SAVED && !items.length) {
+      msg.className = 'empty';
+      msg.textContent = 'Nothing saved yet. Tap the ☆ on any story, video or release to keep it here.';
+    } else if (s.filter === VIEW_UPCOMING && !items.length && s.status !== 'loading') {
+      msg.className = 'empty';
+      msg.textContent = 'No comeback, tour or ticket headlines right now. Check back soon.';
+    } else if (!s.artists.length && s.filter !== VIEW_SAVED) {
       msg.className = 'empty';
       msg.textContent = 'Add your daughter’s favorite artists above to start tracking.';
     } else if (s.status === 'error') {
@@ -154,6 +178,27 @@ export function createUi(actions) {
       msg.className = 'empty';
       msg.textContent = 'No recent updates found.';
     }
+  }
+
+  function featured(label, i) {
+    if (!i) return null;
+    const art = i.image ? el('img', { src: i.image, alt: '', loading: 'lazy', className: i.type === 'video' ? 'art wide' : 'art', width: 96, height: i.type === 'video' ? 54 : 96 }) : null;
+    return el('a', { className: 'featured', href: i.link, target: '_blank', rel: 'noopener noreferrer' }, art,
+      el('span', {}, el('small', { textContent: `${label} · ${timeAgo(i.ts)}` }), el('strong', { textContent: i.title.replace(/^New release: /, '') })));
+  }
+
+  function renderProfile(s) {
+    const p = profileFor(s);
+    const box = $('profile');
+    box.hidden = !p;
+    if (!p) return box.replaceChildren();
+    const summary = [`${p.newsCount} recent ${p.newsCount === 1 ? 'story' : 'stories'}`, p.unread ? `${p.unread} new` : null, p.muted ? 'notifications muted' : null].filter(Boolean).join(' · ');
+    const mute = el('button', { className: 'ghost', type: 'button', textContent: p.muted ? '🔔 Unmute' : '🔕 Mute' });
+    mute.onclick = () => actions.toggleMute(p.name);
+    box.replaceChildren(
+      el('div', { className: 'profile-head' }, el('div', {}, el('h2', { textContent: p.name }), el('p', { className: 'hint', textContent: summary })), mute),
+      el('div', { className: 'featured-row' }, featured('Latest video', p.latestVideo), featured('Latest release', p.latestRelease)),
+    );
   }
 
   function renderSettings(s) {
@@ -215,7 +260,7 @@ export function createUi(actions) {
   }
 
   return {
-    render(s) { renderChips(s); renderFeed(s); renderSettings(s); renderStatus(s); renderNotify(s); },
+    render(s) { renderChips(s); renderProfile(s); renderFeed(s); renderSettings(s); renderStatus(s); renderNotify(s); },
     setInstallable(on) { $('install').classList.toggle('visible', on); },
     showIosHint(on) { $('ios-hint').classList.toggle('visible', on); },
     flashCopied() { const b = $('sync-copy'); b.textContent = 'Copied'; setTimeout(() => { b.textContent = 'Copy'; }, 1500); },

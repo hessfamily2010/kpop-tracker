@@ -144,3 +144,78 @@ test('PATCH_SETTINGS merges digest settings', () => {
   const s = run(fresh(), { type: 'PATCH_SETTINGS', patch: { digest: { enabled: true } } }, { type: 'PATCH_SETTINGS', patch: { digest: { at: '18:30' } } });
   assert.deepEqual(s.settings.digest, { enabled: true, at: '18:30' });
 });
+
+// ---------- saved items, views, profile ----------
+import { isSaved, profileFor, sanitizeSaved, totalUnread, upcomingCount, VIEW_SAVED, VIEW_UPCOMING, MAX_SAVED } from '../js/state.js';
+import { isUpcoming } from '../lib/text.js';
+
+const withFeed = () => {
+  let s = run(fresh(), { type: 'ADD_ARTIST', name: 'IVE', now: NOW }, { type: 'ADD_ARTIST', name: 'aespa', now: NOW });
+  const [ive, aespa] = s.artists;
+  return run(s, {
+    type: 'FETCH_OK', now: NOW,
+    entries: [
+      [ive.toLowerCase(), [
+        { ...item('n1', ive, NOW - 1000, 'IVE announce world tour dates'), type: 'news' },
+        { ...item('v1', ive, NOW - 2000, 'IVE MV'), type: 'video', link: 'https://y/v' },
+        { ...item('r1', ive, NOW - 3000, 'New release: Album'), type: 'release', link: 'https://y/r' },
+        { ...item('n2', ive, NOW - 4000, 'IVE spotted at airport'), type: 'news' },
+      ]],
+      [aespa.toLowerCase(), [{ ...item('n3', aespa, NOW - 500, 'aespa comeback teaser released'), type: 'news' }]],
+    ],
+  });
+};
+
+test('isUpcoming flags forward-looking headlines only', () => {
+  assert.equal(isUpcoming('IVE announce world tour dates'), true);
+  assert.equal(isUpcoming('aespa comeback teaser released'), true);
+  assert.equal(isUpcoming('Tickets on sale Friday'), true);
+  assert.equal(isUpcoming('IVE spotted at airport'), false);
+});
+
+test('TOGGLE_SAVE saves, un-saves, caps, and rejects non-https links', () => {
+  const it = { id: 'a', type: 'news', artist: 'IVE', title: 'T', link: 'https://x', source: 's', ts: 1 };
+  let s = run(fresh(), { type: 'TOGGLE_SAVE', item: it, now: NOW });
+  assert.equal(isSaved(s, 'a'), true);
+  assert.equal(s.saved[0].savedAt, NOW);
+  s = run(s, { type: 'TOGGLE_SAVE', item: it, now: NOW });
+  assert.equal(isSaved(s, 'a'), false);
+  assert.equal(run(fresh(), { type: 'TOGGLE_SAVE', item: { ...it, link: 'http://x' }, now: NOW }).saved.length, 0);
+
+  const full = fresh({ saved: Array.from({ length: MAX_SAVED }, (_, i) => ({ ...it, id: `s${i}` })) });
+  assert.equal(full.saved.length, MAX_SAVED);
+  assert.match(run(full, { type: 'TOGGLE_SAVE', item: it, now: NOW }).notice, /up to/);
+  assert.deepEqual(sanitizeSaved('nope'), []);
+});
+
+test('saved items survive persistence and removing an artist; views list them', () => {
+  const it = { id: 'a', type: 'news', artist: 'IVE', title: 'T', link: 'https://x', source: 's', ts: 1 };
+  let s = run(withFeed(), { type: 'TOGGLE_SAVE', item: it, now: NOW }, { type: 'SET_FILTER', filter: VIEW_SAVED });
+  assert.deepEqual(visibleItems(s).map((i) => i.id), ['a']);
+  s = run(s, { type: 'REMOVE_ARTIST', name: 'IVE' });
+  assert.equal(s.saved.length, 1);
+  assert.equal(fresh(JSON.parse(JSON.stringify(persistable(s)))).saved.length, 1);
+  assert.equal(run(s, { type: 'ADOPT_REMOTE', artists: ['aespa'], settings: {}, updatedAt: 1, now: NOW }).filter, VIEW_SAVED);
+});
+
+test('Coming up view lists only upcoming news, newest first', () => {
+  let s = run(withFeed(), { type: 'SET_FILTER', filter: VIEW_UPCOMING });
+  assert.deepEqual(visibleItems(s).map((i) => i.id), ['n3', 'n1']);
+  assert.equal(upcomingCount(s), 2);
+});
+
+test('profileFor summarises the selected artist and is null for views', () => {
+  let s = withFeed();
+  assert.equal(profileFor(s), null);
+  s = run(s, { type: 'SET_FILTER', filter: s.artists[0].toLowerCase() });
+  const p = profileFor(s);
+  assert.deepEqual([p.name, p.latestVideo.id, p.latestRelease.id, p.newsCount, p.unread], ['IVE', 'v1', 'r1', 2, 4]);
+  assert.equal(profileFor(run(s, { type: 'SET_FILTER', filter: VIEW_SAVED })), null);
+});
+
+test('totalUnread sums unread items across artists and drops after MARK_SEEN', () => {
+  let s = withFeed();
+  assert.equal(totalUnread(s), 5);
+  s = run(s, { type: 'MARK_SEEN', now: NOW });
+  assert.equal(totalUnread(s), 0);
+});
