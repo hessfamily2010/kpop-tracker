@@ -6,7 +6,7 @@ import { dayKey, inQuietHours, localParts } from '../lib/schedule.js';
 import { DEFAULT_SETTINGS, sanitizeArtists, sanitizeSettings } from '../lib/settings.js';
 import { resolveArtist, suggest } from '../artists.js';
 import {
-  buildNewsQuery, fetchNews, fetchReleases, hashId, parseItunes, parseRss, prepareItems,
+  buildNewsQuery, fetchNews, parseBingRss, unwrapBingLink, fetchReleases, hashId, parseItunes, parseRss, prepareItems,
 } from '../lib/feed.js';
 import { buildPayload, planNotification } from '../lib/plan.js';
 
@@ -274,4 +274,35 @@ test('buildPayload truncates long text and summarises many artists', () => {
   assert.ok(buildPayload([long], 'u').body.length <= 110);
   const many = ['A', 'B', 'C', 'D', 'E'].map((a, i) => item(`t${i}`, NOW - i, { artist: a }));
   assert.equal(buildPayload(many, 'u').body, '5 updates: A, B, C +2');
+});
+
+const BING_NOW = Date.parse('2026-11-26T12:00:00Z');
+const bingItem = (title, url, pub) => `<item><title>${title}</title><link>http://www.bing.com/news/apiclick.aspx?ref=FexRss&amp;aid=&amp;tid=x&amp;url=${encodeURIComponent(url)}&amp;c=1</link><pubDate>${pub}</pubDate><News:Source>Soompi</News:Source></item>`;
+const BING = `<rss><channel>${bingItem('IVE announce tour &amp; fan meet', 'https://soompi.example/a', 'Thu, 26 Nov 2026 09:39:00 GMT')}${bingItem('Old story about IVE', 'https://soompi.example/old', 'Mon, 01 Jun 2026 09:00:00 GMT')}${bingItem('Insecure link', 'http://insecure.example/x', 'Thu, 26 Nov 2026 09:00:00 GMT')}</channel></rss>`;
+
+test('unwrapBingLink extracts the https target and rejects everything else', () => {
+  assert.equal(unwrapBingLink('http://www.bing.com/news/apiclick.aspx?ref=x&url=https%3a%2f%2fa.example%2fp'), 'https://a.example/p');
+  assert.equal(unwrapBingLink('http://www.bing.com/news/apiclick.aspx?url=http%3a%2f%2fa.example'), '');
+  assert.equal(unwrapBingLink('not a url'), '');
+});
+
+test('parseBingRss decodes entities, takes the source tag and drops non-https links', () => {
+  const items = parseBingRss(BING, 'IVE');
+  assert.deepEqual(items.map((i) => i.link), ['https://soompi.example/a', 'https://soompi.example/old']);
+  assert.equal(items[0].title, 'IVE announce tour & fan meet');
+  assert.equal(items[0].source, 'Soompi');
+});
+
+test('fetchNews prefers Bing (windowed), falls back to Google, and reports total failure as null', async () => {
+  const route = (bing, google) => async (url) => {
+    const body = String(url).includes('bing.com') ? bing : google;
+    return body === null ? new Response('no', { status: 503 }) : new Response(body, { status: 200 });
+  };
+  const viaBing = await fetchNews('IVE', { fetchImpl: route(BING, null), windowDays: 3, now: BING_NOW });
+  assert.deepEqual(viaBing.map((i) => i.link), ['https://soompi.example/a']);
+
+  const viaGoogle = await fetchNews('IVE', { fetchImpl: route(null, RSS), now: BING_NOW });
+  assert.equal(viaGoogle.length, 1);
+
+  assert.equal(await fetchNews('IVE', { fetchImpl: route(null, null), now: BING_NOW }), null);
 });

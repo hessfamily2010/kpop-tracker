@@ -216,6 +216,7 @@ export class Hub extends DurableObject {
           windowDays: 2,
           releases: wantsReleases.has(normalizeName(artist)),
           newsBase: this.env.NEWS_BASE,
+          bingBase: this.env.BING_BASE,
           itunesBase: this.env.ITUNES_BASE,
         });
       }

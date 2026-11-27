@@ -1,6 +1,7 @@
 // HTTP clients: feed (same-origin Pages function) and push/sync Worker.
 
 import { API_BASE, NEWS_PATH } from '../config.js';
+import { fetchReleases } from '../lib/feed.js';
 import { keyOf } from './state.js';
 
 export const backendEnabled = () => Boolean(API_BASE);
@@ -27,11 +28,17 @@ const jsonInit = (method, body) => ({
   body: JSON.stringify(body),
 });
 
-/** Items for one artist, honoring the safe-mode and releases settings. */
+/**
+ * Items for one artist. News comes from our server (safe-mode filtered there); releases come straight from
+ * Apple in the browser because Apple rate-limits shared cloud IPs.
+ */
 export async function fetchArtist(artist, settings) {
-  const params = new URLSearchParams({ q: artist, safe: settings.safe ? '1' : '0', releases: settings.releases ? '1' : '0' });
-  const { items } = await request(`${NEWS_PATH}?${params}`);
-  return items.map((i) => ({ ...i, artist }));
+  const params = new URLSearchParams({ q: artist, safe: settings.safe ? '1' : '0', releases: '0' });
+  const [{ items }, releases] = await Promise.all([
+    request(`${NEWS_PATH}?${params}`),
+    settings.releases ? fetchReleases(artist) : Promise.resolve([]),
+  ]);
+  return [...items, ...(releases ?? [])].map((i) => ({ ...i, artist }));
 }
 
 /** Loads every artist; partial failures keep the previous items. Rejects only if all fail. */
