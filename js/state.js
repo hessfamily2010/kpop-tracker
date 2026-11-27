@@ -6,6 +6,7 @@ import { MAX_ARTISTS, sanitizeArtists, sanitizeSettings } from '../lib/settings.
 const DAY_MS = 86_400_000;
 
 export const keyOf = normalizeName;
+const isLock = (l) => Boolean(l) && typeof l.salt === 'string' && typeof l.hash === 'string';
 
 export function initialState(saved = {}, { tz = 'UTC', online = true } = {}) {
   return {
@@ -16,6 +17,8 @@ export function initialState(saved = {}, { tz = 'UTC', online = true } = {}) {
     syncedAt: Number(saved.syncedAt) || 0, // server timestamp of the last profile we synced
     dirty: saved.dirty === true,           // local edits not yet pushed to the sync profile
     notifyWanted: saved.notifyWanted === true,
+    lock: isLock(saved.lock) ? saved.lock : null, // parent PIN { salt, hash } — per device, never synced
+    unlocked: false,                               // lasts until the page is closed
 
     feed: {},                // artist key -> items
     filter: 'all',           // 'all' | artist key
@@ -40,6 +43,7 @@ export const persistable = (s) => ({
   syncedAt: s.syncedAt,
   dirty: s.dirty,
   notifyWanted: s.notifyWanted,
+  lock: s.lock,
 });
 
 const withoutKeys = (obj, keep) => Object.fromEntries(Object.entries(obj).filter(([k]) => keep.has(k)));
@@ -77,7 +81,11 @@ export function reducer(state, action) {
 
     case 'PATCH_SETTINGS': {
       const { patch } = action;
-      const merged = { ...state.settings, ...patch, quiet: { ...state.settings.quiet, ...(patch.quiet ?? {}) } };
+      const merged = {
+        ...state.settings, ...patch,
+        quiet: { ...state.settings.quiet, ...(patch.quiet ?? {}) },
+        digest: { ...state.settings.digest, ...(patch.digest ?? {}) },
+      };
       return edited(state, { settings: sanitizeSettings(merged) });
     }
 
@@ -112,6 +120,13 @@ export function reducer(state, action) {
       return { ...state, syncedAt: action.updatedAt, dirty: false };
     case 'SYNC_STATUS':
       return { ...state, sync: { status: action.status, message: action.message ?? '' } };
+
+    case 'SET_LOCK':
+      return { ...state, lock: isLock(action.lock) ? action.lock : null, unlocked: isLock(action.lock) };
+    case 'UNLOCK':
+      return state.unlocked ? state : { ...state, unlocked: true };
+    case 'RELOCK':
+      return state.unlocked ? { ...state, unlocked: false } : state;
 
     case 'SET_FILTER':
       return { ...state, filter: action.filter };
@@ -171,5 +186,8 @@ export function unreadCount(state, artist) {
   const seen = state.lastSeen[keyOf(artist)] ?? 0;
   return (state.feed[keyOf(artist)] ?? []).filter((i) => i.ts > seen).length;
 }
+
+/** Settings are visible unless a PIN is set and has not been entered this session. */
+export const settingsLocked = (state) => Boolean(state.lock) && !state.unlocked;
 
 export const isMuted = (state, artist) => state.settings.muted.some((m) => keyOf(m) === keyOf(artist));

@@ -46,7 +46,14 @@
   <div id="message"></div>
 
   <details class="settings">
-    <summary>Settings</summary>
+    <summary id="settings-summary">Settings</summary>
+    <form id="lock-gate" class="inline gate" hidden autocomplete="off">
+      <span>🔒 Enter the parent PIN to change settings.</span>
+      <input id="unlock-pin" type="password" inputmode="numeric" pattern="[0-9]*" minlength="4" maxlength="8" placeholder="PIN" aria-label="Parent PIN" required>
+      <button type="submit">Unlock</button>
+      <span id="unlock-msg" class="hint" role="status"></span>
+    </form>
+    <div id="settings-body">
     <section>
       <h2>Content</h2>
       <label class="row"><input type="checkbox" id="set-safe"> Kid-safe mode (hide gossip, lawsuits and other mature topics)</label>
@@ -62,6 +69,8 @@
         <input type="time" id="set-quiet-end" aria-label="Quiet hours end">
       </div>
       <label class="row">At most <input type="number" id="set-max" min="1" max="20" step="1"> alerts per day</label>
+      <label class="row"><input type="checkbox" id="set-digest"> Daily digest instead of instant alerts</label>
+      <div id="digest-time" class="row">One summary after <input type="time" id="set-digest-at" aria-label="Digest time"></div>
       <div id="mute-section"><h2>Per artist</h2><div id="mute-list"></div></div>
     </section>
     <section id="sync-section">
@@ -79,6 +88,18 @@
       </form>
       <p id="sync-status" class="hint" role="status"></p>
     </section>
+    <section id="lock-section">
+      <h2>Parent lock</h2>
+      <p class="hint" id="lock-hint">Require a PIN to open these settings on this device.</p>
+      <form id="lock-form" class="inline" autocomplete="off">
+        <input id="lock-pin" type="password" inputmode="numeric" pattern="[0-9]*" minlength="4" maxlength="8" placeholder="New PIN (4–8 digits)" aria-label="New PIN" required>
+        <button type="submit" class="ghost">Set PIN</button>
+      </form>
+      <button type="button" class="ghost" id="lock-remove" hidden>Remove PIN</button>
+      <button type="button" class="ghost" id="lock-now" hidden>Lock now</button>
+      <p id="lock-msg" class="hint" role="status"></p>
+    </section>
+    </div>
   </details>
 </main>
 <script type="module" src="/js/main.js"></script>

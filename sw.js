@@ -1,4 +1,4 @@
-const VERSION = 'v4';
+const VERSION = 'v5';
 const SHELL_CACHE = `kpop-shell-${VERSION}`;
 const API_CACHE = `kpop-api-${VERSION}`;
 const SHELL_ASSETS = [
@@ -10,6 +10,7 @@ const SHELL_ASSETS = [
   '/lib/feed.js',
   '/lib/text.js',
   '/js/main.js',
+  '/js/lock.js',
   '/js/api.js',
   '/js/push.js',
   '/js/pwa.js',

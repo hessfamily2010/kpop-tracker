@@ -3,6 +3,7 @@
 import { backendEnabled, fetchFeed } from './api.js';
 import { createPush } from './push.js';
 import { initPwa, isIos, isStandalone } from './pwa.js';
+import { createLock, isValidPin, verifyPin } from './lock.js';
 import { createStore } from './store.js';
 import { createSync } from './sync.js';
 import { createUi } from './ui.js';
@@ -53,6 +54,18 @@ const ui = createUi({
   markSeen: () => store.dispatch({ type: 'MARK_SEEN', now: Date.now() }),
   patchSettings: (patch) => store.dispatch({ type: 'PATCH_SETTINGS', patch }),
   toggleMute: (name) => store.dispatch({ type: 'TOGGLE_MUTE', name }),
+  unlock: async (pin) => {
+    const ok = await verifyPin(pin, store.get().lock);
+    if (ok) store.dispatch({ type: 'UNLOCK' });
+    return ok;
+  },
+  setPin: async (pin) => {
+    if (!isValidPin(pin)) return false;
+    store.dispatch({ type: 'SET_LOCK', lock: await createLock(pin) });
+    return true;
+  },
+  removePin: () => store.dispatch({ type: 'SET_LOCK', lock: null }),
+  lockNow: () => store.dispatch({ type: 'RELOCK' }),
   refresh,
   toggleNotify: push.toggle,
   install: () => installFn?.().then(() => ui.setInstallable(false)),

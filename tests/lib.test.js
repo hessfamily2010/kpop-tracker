@@ -8,7 +8,7 @@ import { resolveArtist, suggest } from '../artists.js';
 import {
   buildNewsQuery, fetchNews, parseBingRss, unwrapBingLink, fetchReleases, hashId, parseItunes, parseRss, prepareItems,
 } from '../lib/feed.js';
-import { buildPayload, planNotification } from '../lib/plan.js';
+import { buildDigestPayload, buildPayload, holdReason, planNotification } from '../lib/plan.js';
 
 const NOW = Date.parse('2026-11-26T15:00:00Z');
 const HOUR = 3_600_000;
@@ -313,4 +313,25 @@ test('looksNonEnglish drops Thai, Japanese, Chinese and Korean headlines but kee
   assert.equal(looksNonEnglish('IVE 发布新专辑'), true);
   assert.equal(looksNonEnglish('IVE (아이브) announce world tour dates'), false);
   assert.equal(looksNonEnglish('PUBG launches music project with IVE'), false);
+});
+
+test('digest mode waits for the digest time, sends one summary a day, ignores the daily cap', () => {
+  const tz = 'UTC';
+  const settings = (at) => ({ ...DEFAULT_SETTINGS, tz, quiet: { enabled: false, start: '22:00', end: '08:00' }, digest: { enabled: true, at } });
+  const at = (h) => Date.parse(`2026-11-26T${h}:00:00Z`);
+  const sub = { cursor: 0, sent_day: null, sent_count: 0 };
+  assert.equal(holdReason(sub, settings('17:00'), at('16')), 'digest-wait');
+  assert.equal(holdReason(sub, settings('17:00'), at('18')), null);
+  assert.equal(holdReason({ ...sub, sent_day: '2026-11-26', sent_count: 1 }, settings('17:00'), at('19')), 'digest-done');
+  assert.equal(holdReason({ ...sub, sent_day: '2026-11-25', sent_count: 9 }, settings('17:00'), at('19')), null);
+
+  const items = [
+    { artist: 'IVE', title: 'IVE tour dates', type: 'news', ts: 1, link: 'https://x' },
+    { artist: 'aespa', title: 'New release: Drama', type: 'release', ts: 2, link: 'https://y', image: 'https://img' },
+  ];
+  const p = buildDigestPayload(items, 'https://app');
+  assert.equal(p.title, 'K-Pop daily digest · 2 updates');
+  assert.match(p.body, /IVE: IVE tour dates • aespa: new release Drama/);
+  assert.equal(p.tag, 'kpop-digest');
+  assert.equal(p.image, 'https://img');
 });

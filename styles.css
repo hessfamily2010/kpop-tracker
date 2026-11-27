@@ -73,4 +73,6 @@
   #sync-status[data-state=error] { color: var(--new); }
   .inline { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
   #sync-form { margin-top: 8px; }
+  .gate { padding: 12px 0 14px; border-top: 1px solid var(--line); }
+  .gate input { flex: none; width: 7em; }
   input[type=checkbox] { flex: none; width: 18px; height: 18px; padding: 0; accent-color: var(--accent); }

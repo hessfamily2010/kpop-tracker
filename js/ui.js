@@ -2,7 +2,7 @@
 
 import { suggest } from '../artists.js';
 import { MAX_ARTISTS } from '../lib/settings.js';
-import { isMuted, keyOf, unreadCount, visibleItems } from './state.js';
+import { isMuted, keyOf, settingsLocked, unreadCount, visibleItems } from './state.js';
 
 const $ = (id) => document.getElementById(id);
 const el = (tag, props = {}, ...children) => {
@@ -63,8 +63,24 @@ export function createUi(actions) {
   $('set-quiet').onchange = (e) => actions.patchSettings({ quiet: { enabled: e.target.checked } });
   $('set-quiet-start').onchange = (e) => actions.patchSettings({ quiet: { start: e.target.value } });
   $('set-quiet-end').onchange = (e) => actions.patchSettings({ quiet: { end: e.target.value } });
+  $('set-digest').onchange = (e) => actions.patchSettings({ digest: { enabled: e.target.checked } });
+  $('set-digest-at').onchange = (e) => actions.patchSettings({ digest: { at: e.target.value } });
   $('set-max').onchange = (e) => actions.patchSettings({ maxPerDay: Number(e.target.value) });
 
+  $('lock-gate').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const ok = await actions.unlock($('unlock-pin').value);
+    $('unlock-pin').value = '';
+    $('unlock-msg').textContent = ok ? '' : 'Wrong PIN.';
+  });
+  $('lock-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const ok = await actions.setPin($('lock-pin').value);
+    $('lock-pin').value = '';
+    $('lock-msg').textContent = ok ? 'PIN set.' : 'Use 4 to 8 digits.';
+  });
+  $('lock-remove').onclick = actions.removePin;
+  $('lock-now').onclick = actions.lockNow;
   $('sync-create').onclick = actions.createSync;
   $('sync-leave').onclick = actions.leaveSync;
   $('sync-copy').onclick = actions.copySyncCode;
@@ -147,6 +163,18 @@ export function createUi(actions) {
     setValue($('set-quiet-end'), c.quiet.end);
     setValue($('set-max'), c.maxPerDay);
     $('quiet-times').hidden = !c.quiet.enabled;
+    setChecked($('set-digest'), c.digest.enabled);
+    setValue($('set-digest-at'), c.digest.at);
+    $('digest-time').hidden = !c.digest.enabled;
+
+    const locked = settingsLocked(s);
+    $('lock-gate').hidden = !locked;
+    $('settings-body').hidden = locked;
+    $('settings-summary').textContent = s.lock ? (locked ? '🔒 Settings' : '🔓 Settings') : 'Settings';
+    $('lock-form').hidden = Boolean(s.lock);
+    $('lock-remove').hidden = !s.lock;
+    $('lock-now').hidden = !s.lock;
+    $('lock-hint').textContent = s.lock ? 'A PIN is set on this device.' : 'Require a PIN to open these settings on this device.';
 
     $('mute-list').replaceChildren(...s.artists.map((name) => {
       const box = el('input', { type: 'checkbox', checked: !isMuted(s, name) });

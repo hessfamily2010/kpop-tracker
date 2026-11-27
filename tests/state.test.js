@@ -118,3 +118,29 @@ test('persistable excludes transient state and round-trips through initialState'
   assert.equal(back.notifyWanted, true);
   assert.equal(back.dirty, true);
 });
+
+test('lock: SET_LOCK unlocks the current session, RELOCK locks, bad locks are ignored', async () => {
+  const { createLock, verifyPin, isValidPin } = await import('../js/lock.js');
+  const { settingsLocked } = await import('../js/state.js');
+  const lock = await createLock('1234');
+  let s = run(fresh(), { type: 'SET_LOCK', lock });
+  assert.equal(settingsLocked(s), false);
+  s = run(s, { type: 'RELOCK' });
+  assert.equal(settingsLocked(s), true);
+  assert.equal(await verifyPin('1234', s.lock), true);
+  assert.equal(await verifyPin('9999', s.lock), false);
+  s = run(s, { type: 'UNLOCK' });
+  assert.equal(settingsLocked(s), false);
+  assert.equal(run(s, { type: 'SET_LOCK', lock: { bad: 1 } }).lock, null);
+  assert.equal(isValidPin('12'), false);
+  assert.equal(isValidPin('12ab'), false);
+  assert.rejects(createLock('1'));
+  // lock persists but "unlocked" does not
+  const back = fresh(JSON.parse(JSON.stringify(persistable(run(fresh(), { type: 'SET_LOCK', lock })))));
+  assert.equal(settingsLocked(back), true);
+});
+
+test('PATCH_SETTINGS merges digest settings', () => {
+  const s = run(fresh(), { type: 'PATCH_SETTINGS', patch: { digest: { enabled: true } } }, { type: 'PATCH_SETTINGS', patch: { digest: { at: '18:30' } } });
+  assert.deepEqual(s.settings.digest, { enabled: true, at: '18:30' });
+});
