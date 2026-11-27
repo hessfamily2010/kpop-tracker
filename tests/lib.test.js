@@ -410,3 +410,11 @@ test('pickChannel prefers the channel named exactly like the artist over "Offici
   ] };
   assert.equal(pickChannel(json, 'Stray Kids').id, CH);
 });
+
+test('pickChannel uses name hints for groups whose channel is named differently (BTS -> BANGTANTV)', () => {
+  const json = { items: [
+    { snippet: { channelId: 'UC' + 'e'.repeat(22), title: 'BTS WORLD Official' } },
+    { snippet: { channelId: CH, title: 'BANGTANTV' } },
+  ] };
+  assert.equal(pickChannel(json, 'BTS').id, CH);
+});
