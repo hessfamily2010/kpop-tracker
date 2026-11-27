@@ -28,17 +28,22 @@ const jsonInit = (method, body) => ({
   body: JSON.stringify(body),
 });
 
+/** Official YouTube uploads from the Worker; a failure here must never hide the rest of the feed. */
+const fetchVideos = (artist) =>
+  request(`${API_BASE}/videos?artist=${encodeURIComponent(artist)}`).then((r) => r.items ?? []).catch(() => []);
+
 /**
  * Items for one artist. News comes from our server (safe-mode filtered there); releases come straight from
  * Apple in the browser because Apple rate-limits shared cloud IPs.
  */
 export async function fetchArtist(artist, settings) {
   const params = new URLSearchParams({ q: artist, safe: settings.safe ? '1' : '0', releases: '0' });
-  const [{ items }, releases] = await Promise.all([
+  const [{ items }, releases, videos] = await Promise.all([
     request(`${NEWS_PATH}?${params}`),
     settings.releases ? fetchReleases(artist) : Promise.resolve([]),
+    settings.videos && backendEnabled() ? fetchVideos(artist) : Promise.resolve([]),
   ]);
-  return [...items, ...(releases ?? [])].map((i) => ({ ...i, artist }));
+  return [...items, ...(releases ?? []), ...videos].map((i) => ({ ...i, artist }));
 }
 
 /** Loads every artist; partial failures keep the previous items. Rejects only if all fail. */

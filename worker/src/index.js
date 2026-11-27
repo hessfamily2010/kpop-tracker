@@ -23,6 +23,7 @@ async function route(request, env, url, ip) {
 
   if (method === 'GET' && pathname === '/health') return { ok: true };
   if (method === 'GET' && pathname === '/vapid-public-key') return stub.vapidPublicKey();
+  if (method === 'GET' && pathname === '/videos') return stub.videos(url.searchParams.get('artist'), ip);
   if (method === 'POST' && pathname === '/profile') return stub.createProfile(ip);
   if (method === 'GET' && profileMatch) return stub.getProfile(decodeURIComponent(profileMatch[1]), ip);
 

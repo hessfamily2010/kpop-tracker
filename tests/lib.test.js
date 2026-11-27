@@ -335,3 +335,70 @@ test('digest mode waits for the digest time, sends one summary a day, ignores th
   assert.equal(p.tag, 'kpop-digest');
   assert.equal(p.image, 'https://img');
 });
+
+// ---------- youtube ----------
+import { fetchUploads, parseUploads, pickChannel, resolveChannel, uploadsPlaylistId } from '../lib/youtube.js';
+
+const CH = 'UC' + 'a'.repeat(22);
+const YT_NOW = Date.parse('2026-11-26T12:00:00Z');
+const vid = (id, title, at) => ({ snippet: { title, resourceId: { videoId: id }, thumbnails: { medium: { url: 'https://i.ytimg.com/vi/x/mq.jpg' } } }, contentDetails: { videoPublishedAt: at } });
+
+test('pickChannel only accepts channels named after the artist and prefers the official one', () => {
+  const json = { items: [
+    { snippet: { channelId: 'UC' + 'b'.repeat(22), title: 'IVE fan edits' } },
+    { snippet: { channelId: CH, title: 'IVE OFFICIAL' } },
+    { snippet: { channelId: 'UC' + 'c'.repeat(22), title: 'Totally unrelated' } },
+  ] };
+  assert.equal(pickChannel(json, 'IVE').id, CH);
+  assert.equal(pickChannel({ items: [{ snippet: { channelId: CH, title: 'Cooking tips' } }] }, 'IVE'), null);
+  assert.equal(pickChannel({ items: [{ snippet: { channelId: 'bad', title: 'IVE' } }] }, 'IVE'), null);
+  assert.equal(pickChannel({}, 'IVE'), null);
+});
+
+test('uploadsPlaylistId swaps the UC prefix for UU', () => {
+  assert.equal(uploadsPlaylistId(CH), 'UU' + 'a'.repeat(22));
+});
+
+test('parseUploads keeps recent public videos only and builds watch links', () => {
+  const json = { items: [
+    vid('dQw4w9WgXcQ', 'IVE &quot;HEYA&quot; MV', '2026-11-25T10:00:00Z'),
+    vid('aaaaaaaaaaa', 'Old upload', '2026-01-01T00:00:00Z'),
+    vid('bbbbbbbbbbb', 'Private video', '2026-11-25T10:00:00Z'),
+    vid('ccccccccccc', 'Future upload', '2027-01-01T00:00:00Z'),
+  ] };
+  const out = parseUploads(json, 'IVE', 'IVE OFFICIAL', YT_NOW, 14);
+  assert.equal(out.length, 1);
+  assert.deepEqual([out[0].type, out[0].title, out[0].link, out[0].source], ['video', 'IVE "HEYA" MV', 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', 'IVE OFFICIAL']);
+  assert.equal(out[0].image, 'https://i.ytimg.com/vi/x/mq.jpg');
+});
+
+test('resolveChannel and fetchUploads call the right endpoints with the key', async () => {
+  const urls = [];
+  const fetchImpl = async (url) => {
+    urls.push(String(url));
+    const body = String(url).includes('/search?')
+      ? { items: [{ snippet: { channelId: CH, title: 'IVE OFFICIAL' } }] }
+      : { items: [vid('dQw4w9WgXcQ', 'IVE new MV', '2026-11-26T08:00:00Z')] };
+    return new Response(JSON.stringify(body), { status: 200 });
+  };
+  const channel = await resolveChannel('IVE', 'KEY', { fetchImpl });
+  assert.equal(channel.id, CH);
+  const items = await fetchUploads(channel, 'IVE', 'KEY', { fetchImpl, now: YT_NOW });
+  assert.equal(items.length, 1);
+  assert.match(urls[0], /type=channel/);
+  assert.match(urls[1], new RegExp(`playlistId=UU${'a'.repeat(22)}`));
+  assert.ok(urls.every((u) => u.includes('key=KEY')));
+  await assert.rejects(resolveChannel('IVE', 'KEY', { fetchImpl: async () => new Response('x', { status: 403 }) }), /403/);
+});
+
+test('videos are never merged as duplicates and skip language/safety filters; settings.videos gates push', () => {
+  const v = (id, title) => ({ id, type: 'video', artist: 'IVE', title, ts: 5, link: 'https://y' });
+  const out = prepareItems([v('1', "IVE 'HEYA' MV"), v('2', "IVE 'HEYA' Dance Practice"), v('3', '아이브 직캠 lawsuit')], { safe: true });
+  assert.equal(out.length, 3);
+  const base = { sub: { cursor: 0, sent_day: null, sent_count: 0 }, now: NOW, appUrl: 'https://app', itemsBy: { IVE: { news: [], releases: [], videos: [v('1', 'IVE new MV')] } } };
+  const on = planNotification({ ...base, profile: { artists: ['IVE'], settings: { ...DEFAULT_SETTINGS, quiet: { enabled: false, start: '22:00', end: '08:00' }, videos: true } } });
+  assert.equal(on.action, 'send');
+  assert.equal(on.payload.title, 'IVE · new video');
+  const off = planNotification({ ...base, profile: { artists: ['IVE'], settings: { ...DEFAULT_SETTINGS, quiet: { enabled: false, start: '22:00', end: '08:00' }, videos: false } } });
+  assert.equal(off.action, 'none');
+});

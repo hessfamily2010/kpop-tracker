@@ -76,3 +76,4 @@
   .gate { padding: 12px 0 14px; border-top: 1px solid var(--line); }
   .gate input { flex: none; width: 7em; }
   input[type=checkbox] { flex: none; width: 18px; height: 18px; padding: 0; accent-color: var(--accent); }
+  li .art.wide { width: 96px; height: 54px; }

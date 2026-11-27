@@ -1,4 +1,4 @@
-const VERSION = 'v5';
+const VERSION = 'v6';
 const SHELL_CACHE = `kpop-shell-${VERSION}`;
 const API_CACHE = `kpop-api-${VERSION}`;
 const SHELL_ASSETS = [
@@ -9,6 +9,7 @@ const SHELL_ASSETS = [
   '/lib/settings.js',
   '/lib/feed.js',
   '/lib/text.js',
+  '/lib/youtube.js',
   '/js/main.js',
   '/js/lock.js',
   '/js/api.js',

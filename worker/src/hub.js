@@ -6,13 +6,15 @@ import { APP_URL } from '../../lib/config.js';
 import { loadArtist } from '../../lib/feed.js';
 import { holdReason, planNotification } from '../../lib/plan.js';
 import { sanitizeArtists, sanitizeSettings } from '../../lib/settings.js';
+import { fetchUploads, resolveChannel, YT_BASE } from '../../lib/youtube.js';
 import { normalizeName } from '../../artists.js';
 import { generateVapidKeys, isAllowedPushEndpoint, PushGone, sendWebPush } from './push.js';
 
 const MAX_PROFILES = 2000;
 const MAX_SUBS = 2000;
 const MAX_SUBS_PER_PROFILE = 5;
-const MAX_ARTISTS_PER_RUN = 16; // 2 upstream requests per artist; Workers allow 50 subrequests per invocation
+const MAX_ARTISTS_PER_RUN = 8; // up to 4 upstream requests per artist; Workers allow 50 subrequests per invocation
+const VIDEO_CACHE_MS = 10 * 60_000;
 const MAX_PUSHES_PER_RUN = 12;
 const FETCH_CONCURRENCY = 5;
 
@@ -36,6 +38,7 @@ export class Hub extends DurableObject {
     this.sql = ctx.storage.sql;
     this.windows = new Map(); // rate-limit buckets (memory only)
     this.testPushes = [];
+    this.videoCache = new Map(); // artist key -> { at, items }
     ctx.blockConcurrencyWhile(async () => this.#migrate());
   }
 
@@ -52,6 +55,9 @@ export class Hub extends DurableObject {
         last_run INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL
       );
       CREATE INDEX IF NOT EXISTS subs_profile ON subs (profile);
+      CREATE TABLE IF NOT EXISTS channels (
+        artist TEXT PRIMARY KEY, channel_id TEXT, title TEXT, checked_at INTEGER NOT NULL
+      );
     `);
   }
 
@@ -166,6 +172,51 @@ export class Hub extends DurableObject {
     return { ok: true };
   }
 
+  // ---------- YouTube ----------
+  /** Channel for an artist, resolved once via the Search API (100 quota units) and then remembered. */
+  async #channel(artist, fetchImpl) {
+    const key = normalizeName(artist);
+    const row = this.sql.exec('SELECT channel_id, title, checked_at FROM channels WHERE artist = ?', key).toArray()[0];
+    const retryAfter = 7 * 86_400_000; // re-search a "no channel found" result weekly
+    if (row?.channel_id) return { id: row.channel_id, title: row.title };
+    if (row && Date.now() - row.checked_at < retryAfter) return null;
+    const found = await resolveChannel(artist, this.env.YOUTUBE_API_KEY, { fetchImpl, base: this.env.YT_BASE ?? YT_BASE });
+    this.sql.exec(
+      'INSERT OR REPLACE INTO channels (artist, channel_id, title, checked_at) VALUES (?, ?, ?, ?)',
+      key, found?.id ?? null, found?.title ?? null, Date.now(),
+    );
+    return found;
+  }
+
+  /** Recent official uploads for one artist, or null when YouTube is not configured / unavailable. */
+  async #loadVideos(artist, fetchImpl, windowDays) {
+    if (!this.env.YOUTUBE_API_KEY) return null;
+    try {
+      const channel = await this.#channel(artist, fetchImpl);
+      if (!channel) return [];
+      return await fetchUploads(channel, artist, this.env.YOUTUBE_API_KEY, { fetchImpl, base: this.env.YT_BASE ?? YT_BASE, windowDays });
+    } catch (err) {
+      console.error('youtube failed', String(err));
+      return null;
+    }
+  }
+
+  /** Public endpoint used by the app. Cached in memory so many visitors cost few quota units. */
+  async videos(artistInput, ip) {
+    if (this.#limited(`api:${ip}`, 90, 60_000)) return fail(429, 'Too many requests');
+    const [artist] = sanitizeArtists([artistInput], 1);
+    if (!artist) return fail(400, 'artist required');
+    if (!this.env.YOUTUBE_API_KEY) return { items: [], enabled: false };
+    const key = normalizeName(artist);
+    const hit = this.videoCache.get(key);
+    if (hit && Date.now() - hit.at < VIDEO_CACHE_MS) return { items: hit.items, enabled: true };
+    const items = await this.#loadVideos(artist, fetch, 14);
+    if (items === null) return fail(502, 'YouTube unavailable');
+    if (this.videoCache.size > 500) this.videoCache.clear();
+    this.videoCache.set(key, { at: Date.now(), items });
+    return { items, enabled: true };
+  }
+
   // ---------- scheduled check ----------
   /**
    * Look for new articles/releases and push them. `options` exists for tests:
@@ -204,6 +255,9 @@ export class Hub extends DurableObject {
     }
     if (!chosen.length) return summary;
 
+    const wantsVideos = new Set(
+      chosen.filter((c) => c.profile.settings.videos).flatMap((c) => c.profile.artists.map(normalizeName)),
+    );
     const wantsReleases = new Set(
       chosen.filter((c) => c.profile.settings.releases).flatMap((c) => c.profile.artists.map(normalizeName)),
     );
@@ -211,14 +265,18 @@ export class Hub extends DurableObject {
     const queue = [...artists];
     const worker = async () => {
       for (let artist = queue.shift(); artist; artist = queue.shift()) {
-        itemsBy[artist] = await loadArtist(artist, {
-          fetchImpl,
-          windowDays: 2,
-          releases: wantsReleases.has(normalizeName(artist)),
-          newsBase: this.env.NEWS_BASE,
-          bingBase: this.env.BING_BASE,
-          itunesBase: this.env.ITUNES_BASE,
-        });
+        const [videos, base] = await Promise.all([
+          wantsVideos.has(normalizeName(artist)) ? this.#loadVideos(artist, fetchImpl, 2) : Promise.resolve(null),
+          loadArtist(artist, {
+            fetchImpl,
+            windowDays: 2,
+            releases: wantsReleases.has(normalizeName(artist)),
+            newsBase: this.env.NEWS_BASE,
+            bingBase: this.env.BING_BASE,
+            itunesBase: this.env.ITUNES_BASE,
+          }),
+        ]);
+        itemsBy[artist] = { ...base, videos };
       }
     };
     await Promise.all(Array.from({ length: FETCH_CONCURRENCY }, worker));

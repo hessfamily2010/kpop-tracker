@@ -59,6 +59,7 @@ export function createUi(actions) {
   $('update-btn').onclick = actions.applyUpdate;
 
   $('set-safe').onchange = (e) => actions.patchSettings({ safe: e.target.checked });
+  $('set-videos').onchange = (e) => actions.patchSettings({ videos: e.target.checked });
   $('set-releases').onchange = (e) => actions.patchSettings({ releases: e.target.checked });
   $('set-quiet').onchange = (e) => actions.patchSettings({ quiet: { enabled: e.target.checked } });
   $('set-quiet-start').onchange = (e) => actions.patchSettings({ quiet: { start: e.target.value } });
@@ -124,12 +125,13 @@ export function createUi(actions) {
     const meta = el('div', { className: 'meta' },
       el('span', { className: 'tag', textContent: i.artist }),
       i.type === 'release' ? el('span', { className: 'pill', textContent: 'Release' }) : null,
+      i.type === 'video' ? el('span', { className: 'pill', textContent: 'Video' }) : null,
       i.source ? el('span', { textContent: i.source }) : null,
       el('span', { textContent: timeAgo(i.ts) }),
       i.also ? el('span', { textContent: `+${i.also} more ${i.also === 1 ? 'report' : 'reports'}` }) : null,
       i.isNew ? el('span', { className: 'badge', textContent: 'NEW' }) : null);
     const body = el('div', { className: 'body' }, link, meta);
-    const art = i.image ? el('img', { src: i.image, alt: '', loading: 'lazy', width: 64, height: 64, className: 'art' }) : null;
+    const art = i.image ? el('img', { src: i.image, alt: '', loading: 'lazy', width: 64, height: 64, className: i.type === 'video' ? 'art wide' : 'art' }) : null;
     return el('li', { className: art ? 'has-art' : '' }, art, body);
   }
 
@@ -158,6 +160,7 @@ export function createUi(actions) {
     const c = s.settings;
     setChecked($('set-safe'), c.safe);
     setChecked($('set-releases'), c.releases);
+    setChecked($('set-videos'), c.videos);
     setChecked($('set-quiet'), c.quiet.enabled);
     setValue($('set-quiet-start'), c.quiet.start);
     setValue($('set-quiet-end'), c.quiet.end);
