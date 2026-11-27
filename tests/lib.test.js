@@ -402,3 +402,11 @@ test('videos are never merged as duplicates and skip language/safety filters; se
   const off = planNotification({ ...base, profile: { artists: ['IVE'], settings: { ...DEFAULT_SETTINGS, quiet: { enabled: false, start: '22:00', end: '08:00' }, videos: false } } });
   assert.equal(off.action, 'none');
 });
+
+test('pickChannel prefers the channel named exactly like the artist over "Official" variants', () => {
+  const json = { items: [
+    { snippet: { channelId: 'UC' + 'd'.repeat(22), title: 'Stray Kids Japan Official YouTube' } },
+    { snippet: { channelId: CH, title: 'Stray Kids' } },
+  ] };
+  assert.equal(pickChannel(json, 'Stray Kids').id, CH);
+});

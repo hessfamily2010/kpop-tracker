@@ -193,8 +193,9 @@ export class Hub extends DurableObject {
     if (!this.env.YOUTUBE_API_KEY) return null;
     try {
       const channel = await this.#channel(artist, fetchImpl);
-      if (!channel) return [];
-      return await fetchUploads(channel, artist, this.env.YOUTUBE_API_KEY, { fetchImpl, base: this.env.YT_BASE ?? YT_BASE, windowDays });
+      if (!channel) return { items: [], channel: null };
+      const items = await fetchUploads(channel, artist, this.env.YOUTUBE_API_KEY, { fetchImpl, base: this.env.YT_BASE ?? YT_BASE, windowDays });
+      return { items, channel: channel.title };
     } catch (err) {
       console.error('youtube failed', String(err));
       return null;
@@ -209,12 +210,12 @@ export class Hub extends DurableObject {
     if (!this.env.YOUTUBE_API_KEY) return { items: [], enabled: false };
     const key = normalizeName(artist);
     const hit = this.videoCache.get(key);
-    if (hit && Date.now() - hit.at < VIDEO_CACHE_MS) return { items: hit.items, enabled: true };
-    const items = await this.#loadVideos(artist, fetch, 14);
-    if (items === null) return fail(502, 'YouTube unavailable');
+    if (hit && Date.now() - hit.at < VIDEO_CACHE_MS) return { items: hit.items, channel: hit.channel, enabled: true };
+    const result = await this.#loadVideos(artist, fetch, 14);
+    if (result === null) return fail(502, 'YouTube unavailable');
     if (this.videoCache.size > 500) this.videoCache.clear();
-    this.videoCache.set(key, { at: Date.now(), items });
-    return { items, enabled: true };
+    this.videoCache.set(key, { at: Date.now(), items: result.items, channel: result.channel });
+    return { items: result.items, channel: result.channel, enabled: true };
   }
 
   // ---------- scheduled check ----------
@@ -266,7 +267,7 @@ export class Hub extends DurableObject {
     const worker = async () => {
       for (let artist = queue.shift(); artist; artist = queue.shift()) {
         const [videos, base] = await Promise.all([
-          wantsVideos.has(normalizeName(artist)) ? this.#loadVideos(artist, fetchImpl, 2) : Promise.resolve(null),
+          wantsVideos.has(normalizeName(artist)) ? this.#loadVideos(artist, fetchImpl, 2).then((r) => r?.items ?? null) : Promise.resolve(null),
           loadArtist(artist, {
             fetchImpl,
             windowDays: 2,
