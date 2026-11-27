@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { cleanTitle, clusterItems, isSafe, jaccard, looksKorean, tokens } from '../lib/text.js';
+import { cleanTitle, clusterItems, isSafe, jaccard, looksKorean, looksNonEnglish, tokens } from '../lib/text.js';
 import { dayKey, inQuietHours, localParts } from '../lib/schedule.js';
 import { DEFAULT_SETTINGS, sanitizeArtists, sanitizeSettings } from '../lib/settings.js';
 import { resolveArtist, suggest } from '../artists.js';
@@ -305,4 +305,12 @@ test('fetchNews prefers Bing (windowed), falls back to Google, and reports total
   assert.equal(viaGoogle.length, 1);
 
   assert.equal(await fetchNews('IVE', { fetchImpl: route(null, null), now: BING_NOW }), null);
+});
+
+test('looksNonEnglish drops Thai, Japanese, Chinese and Korean headlines but keeps English with a native name', () => {
+  assert.equal(looksNonEnglish('Spotify ชานแฟน K-Pop ดูโชว์เลิกรัคคูฟิทจาก IVE'), true);
+  assert.equal(looksNonEnglish('IVE・ユジン、日本のコンビニで買い物'), true);
+  assert.equal(looksNonEnglish('IVE 发布新专辑'), true);
+  assert.equal(looksNonEnglish('IVE (아이브) announce world tour dates'), false);
+  assert.equal(looksNonEnglish('PUBG launches music project with IVE'), false);
 });
